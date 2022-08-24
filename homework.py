@@ -118,6 +118,7 @@ def check_tokens():
         return var
 
 
+# flake8: noqa: C901
 def main():
     """Основная логика работы бота."""
     bot = Bot(token=TELEGRAM_TOKEN)
