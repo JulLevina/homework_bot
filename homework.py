@@ -57,8 +57,7 @@ def send_message(bot, message):
 
 
 def get_api_answer(current_timestamp):
-    """Получаем сведения о выполненных домашних
-    работах за указанный период."""
+    """Получаем сведения о выполненных домашних работах за указанный период."""
     timestamp = current_timestamp or int(time.time())
     params = {'from_date': timestamp}
     response = requests.get(url=ENDPOINT, headers=HEADERS, params=params)
@@ -86,8 +85,7 @@ def check_response(response):
 
 
 def parse_status(homework):
-    """Извлекаем из информации о домашней работе
-    статус конкретного задания."""
+    """Извлекаем из информации о домашней работе статус конкретного задания."""
     homework_status = homework.get('status')
     homework_name = homework.get('homework_name')
     try:
@@ -168,12 +166,6 @@ def main():
                 f'Сбой в работе программы:'
                 f'ожидаемый тип данных "список"! {error}')
             logger.error(message)
-            bot.send_message(chat_id=TELEGRAM_CHAT_ID,
-                             text=message,
-                             )
-        except exceptions.ResponseApiContainsEmptyList:
-            message = 'Список работ пуст!'
-            logger.debug(message)
             bot.send_message(chat_id=TELEGRAM_CHAT_ID,
                              text=message,
                              )
