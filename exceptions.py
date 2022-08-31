@@ -1,47 +1,34 @@
-class IncorrectApiAnswerError(Exception):
-    """Ошибка при запросе к основному API."""
-    pass
+class TelegramErrorNotifications(Exception):
+    """Исключения, пересылаемые в телеграм-чат."""
 
 
-class ResponseApiKeyError(Exception):
-    """Ошибка при получении данных о выполненнных домашних работах"""
-    pass
-
-
-class ResponseApiTypeError(Exception):
-    """Ожидаемый тип данных: список домашних работ."""
-    pass
-
-
-class UnknownHomeworkName(Exception):
-    """Название домашней работы не совпадает с ожидаемым."""
-    pass
-
-
-class UnknownHomeworkStatus(Exception):
+class UnknownHomeworkStatus(TelegramErrorNotifications):
     """Статус проверки домашней работы не совпадает с ожидаемым."""
-    pass
 
 
-class ParseStatusKeyError(Exception):
-    """Словарь HOMEWORK_STATUSES не содержит нужного ключа."""
-    pass
+class UndocumentedHomeworkStatusError(TelegramErrorNotifications):
+    """Указан недокументированный статус домашней работы."""
 
 
-class UndocumentedHomeworkStatusError(Exception):
-    """Указан недокументированный статус домашней работы!"""
-    pass
-
-
-class NotOkStatusCodeError(Exception):
+class NotOkStatusCodeError(TelegramErrorNotifications):
     """Запрос не выполнен."""
 
 
-class CheckTokensError(Exception):
-    """Недоступна переменная окружения!"""
-    pass
-
-
-class SendingMessageReportError(Exception):
+class SendingMessageReportError(TelegramErrorNotifications):
     """Сбой при отправке сообщения."""
-    pass
+
+
+class ErrorNotifications(Exception):
+    """Ислючения, не пересылаемые в телеграм-чат."""
+
+
+class StandartDeviations(ErrorNotifications):
+    """Исключения при штатных отклонениях от основного сценария."""
+
+
+class NoNewChecksFromServer(StandartDeviations):
+    """От сервера не поступила информация о новых проверках."""
+
+
+class NoNewTimestampFromServer(StandartDeviations):
+    """От сервера не поступила новая временная метка."""

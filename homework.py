@@ -1,19 +1,22 @@
 import logging
 import os
+import sys
 import time
+from http import HTTPStatus
 from logging.handlers import RotatingFileHandler
 
 import requests
+from requests.exceptions import RequestException
 
-from telegram import Bot
+from telegram import Bot, TelegramError
 
 from dotenv import load_dotenv
 
 import exceptions
 
-
 load_dotenv()
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 PRACTICUM_TOKEN = os.getenv('PRACTICUM_TOKEN')
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
@@ -23,208 +26,168 @@ RETRY_TIME = 60 * 10
 ENDPOINT = 'https://practicum.yandex.ru/api/user_api/homework_statuses/'
 HEADERS = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
 
-
-HOMEWORK_STATUSES = {
+HOMEWORK_VERDICTS = {
     'approved': 'Работа проверена: ревьюеру всё понравилось. Ура!',
     'reviewing': 'Работа взята на проверку ревьюером.',
     'rejected': 'Работа проверена: у ревьюера есть замечания.'
 }
 
-
 logger = logging.getLogger(__name__)
-FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-logger.setLevel(logging.DEBUG)
-sh = logging.StreamHandler()
-sh.setFormatter(logging.Formatter(FORMAT))
-sh.setLevel(logging.DEBUG)
-fh = RotatingFileHandler(
-    'my_logger.log',
-    encoding='UTF-8',
-    maxBytes=50000000,
-    backupCount=5
-)
-fh.setFormatter(logging.Formatter(FORMAT))
-fh.setLevel(logging.DEBUG)
-logger.addHandler(sh)
-logger.addHandler(fh)
 
 
-def send_message(bot, message):
+def send_message(bot: Bot, message: str) -> None:
     """Бот отправляет сообщение в чат со статусом домашней работы."""
-    bot.send_message(chat_id=TELEGRAM_CHAT_ID,
-                     text=message
-                     )
+    try:
+        bot.send_message(chat_id=TELEGRAM_CHAT_ID,
+                         text=message)
+    except TelegramError as error:
+        raise exceptions.SendingMessageReportError(
+            'Сбой при отправке сообщения:'
+            'проверьте корректность передаваемого'
+            'токена и чат-id.') from error
+    logger.info('Сообщение отправлено.')
 
 
-def get_api_answer(current_timestamp):
+def get_api_answer(current_timestamp: int) -> dict:
     """Получаем сведения о выполненных домашних работах за указанный период."""
-    timestamp = current_timestamp or int(time.time())
+    timestamp = current_timestamp
     params = {'from_date': timestamp}
-    response = requests.get(url=ENDPOINT, headers=HEADERS, params=params)
-    if response.status_code != 200:
+    try:
+        logger.info(
+            'Началась проверка данных для получения '
+            'ответа от API Яндекс.Практикум.')
+        response = requests.get(url=ENDPOINT, headers=HEADERS, params=params)
+    except RequestException as error:
         raise exceptions.NotOkStatusCodeError(
-            'Запрос не выполнен.'
-        )
-    else:
-        return response.json()
+            'Запрос не выполнен.') from error
+    if response.status_code != HTTPStatus.OK:
+        raise exceptions.NotOkStatusCodeError(
+            f'Запрос не выполнен, статус ответа: {response.status_code}.')
+    logger.info('Проверка данных для получения '
+                'ответа от API Яндекс.Практикум завершена.')
+    return response.json()
 
 
-def check_response(response):
+def check_response(response: dict) -> dict:
     """Проверяем ответ API на корректность."""
+    logger.info('Началась проверка ответа API на корректность.')
     if not isinstance(response, dict):
-        if response['homeworks'] not in response.keys():
-            raise exceptions.ResponseApiKeyError(
-                'Указан некорректный ключ.'
-            )
-    elif not isinstance(response['homeworks'], list):
-        raise exceptions.ResponseApiTypeError(
-            'Ожидаемый тип данных: список домашних работ.'
+        raise TypeError(
+            f'Указан некорректный тип данных: {response}.'
+            f'Ожидаемый тип данных - словарь.'
         )
-    else:
-        return response['homeworks']
+    homeworks_list = response['homeworks']
+    if 'homeworks' not in response:
+        raise exceptions.StandartDeviations(
+            f'В ответе {response} отсутствует нужный ключ.')
+    if 'current_date' not in response:
+        raise exceptions.NoNewTimestampFromServer(
+            'В ответе отсутствует временная метка.')
+    if not isinstance(homeworks_list, list):
+        raise exceptions.StandartDeviations(
+            'Ожидаемый тип данных: список домашних работ.')
+    try:
+        homework = homeworks_list[0]
+    except IndexError as error:
+        raise exceptions.NoNewChecksFromServer(
+            'От сервера не поступила информация о новых проверках.') from error
+    logger.info('Проверка ответа API на корректность завершена.')
+    return homework
 
 
-def parse_status(homework):
+def parse_status(homework: dict) -> str:
     """Извлекаем из информации о домашней работе статус конкретного задания."""
-    homework_status = homework.get('status')
-    homework_name = homework.get('homework_name')
-    try:
-        homework_name is not None
-    except KeyError as error:
-        raise exceptions.UnknownHomeworkName(
-            f'Название домашней работы не совпадает с ожидаемым. {error}'
+    logger.info('Идет получение статуса конкретного задания '
+                'из информации о домашней работе.')
+    if 'homework_name' not in homework:
+        raise KeyError(
+            'Название домашней работы не совпадает с ожидаемым.'
         )
-    try:
-        homework_status is not None
-    except KeyError as error:
+    if 'status' not in homework:
+        raise exceptions.UnknownHomeworkStatus(
+            'Статус проверки домашней работы не совпадает с ожидаемым.')
+    homework_status = homework['status']
+    homework_name = homework['homework_name']
+    if homework_status not in HOMEWORK_VERDICTS:
         raise exceptions.UndocumentedHomeworkStatusError(
-            f'Указан недокументированный статус домашней работы! {error}'
+            'Указан недокументированный статус домашней работы!'
         )
-    verdict = HOMEWORK_STATUSES[homework_status]
+    verdict = HOMEWORK_VERDICTS[homework_status]
+    logger.info('Получение статуса успешно завершено.')
     return (
         f'Изменился статус проверки работы "{homework_name}".'
         f'{verdict}'
     )
 
 
-def check_tokens():
+def check_tokens() -> True:
     """Проверяем доступность переменных окружения."""
-    vars_list = (
+    logger.info('Началась проверка переменных окружения.')
+    vars_list = [
         PRACTICUM_TOKEN,
         TELEGRAM_TOKEN,
         TELEGRAM_CHAT_ID,
-    )
-    for var in vars_list:
-        return var
+    ]
+    if all(vars_list):
+        logger.info('Проверка успешно завершена.')
+        return True
 
 
-# flake8: noqa: C901
-def main():
+def main() -> None:
     """Основная логика работы бота."""
-    bot = Bot(token=TELEGRAM_TOKEN)
-    try:
-        logger.info('Сообщение отправлено.')
-    except exceptions.SendingMessageReportError as error:
-        logger.error(f'Сбой при отправке сообщения: {error}')
-    current_timestamp = int(time.time())
+    logger.info('Программа запущена!')
     if not check_tokens():
         message = 'Недоступна переменная окружения!'
         logger.critical(message)
-    CURRENT_HOMEWORK_STATUS = ''
+        sys.exit(message)
+    bot = Bot(token=TELEGRAM_TOKEN)
+    current_timestamp = 0
+    current_homework_status = ''
+    new_error_message = ''
     while True:
         try:
             response = get_api_answer(current_timestamp=current_timestamp)
             homework = check_response(response)
-            message = parse_status(homework[0])
-        except IndexError as error:
-            message = (
-                f'Список работ пуст: {error}'
-            )
-            logger.debug(message)
-            bot.send_message(
-                chat_id=TELEGRAM_CHAT_ID,
-                text=message,
-            )
-            if message != CURRENT_HOMEWORK_STATUS:
+            if current_homework_status != homework['status']:
+                message = parse_status(homework)
                 send_message(bot, message)
-                logger.info('Сообщение отправлено.')
-                CURRENT_HOMEWORK_STATUS = message
+                current_homework_status = homework['status']
             else:
-                logger.info('Статус проверки домашней работы не изменился.')
-                send_message(bot, message)
+                message = ('Статус проверки домашней работы не изменился.')
+                logger.debug(message)
             time.sleep(RETRY_TIME)
-        except exceptions.IncorrectApiAnswerError as error:
+        except exceptions.ErrorNotifications as exc:
+            logger.error(exc)
+        except exceptions.TelegramErrorNotifications as error:
             message = (
-                f'Сбой в работе программы: ошибка'
-                f'при запросе к основному API! {error}'
+                f'Сбой в работе программы: {error}'
             )
             logger.error(message)
-            bot.send_message(chat_id=TELEGRAM_CHAT_ID,
-                             text=message,
-                             )
-        except exceptions.ResponseApiTypeError as error:
-            message = (
-                f'Сбой в работе программы:'
-                f'ожидаемый тип данных "список"! {error}')
-            logger.error(message)
-            bot.send_message(chat_id=TELEGRAM_CHAT_ID,
-                             text=message,
-                             )
-        except exceptions.ResponseApiKeyError as error:
-            message = (
-                f'Сбой в работе программы: ошибка'
-                f'при получении данных о выполненнных'
-                f'домашних работах! {error}'
-            )
-            logger.error(message)
-            bot.send_message(chat_id=TELEGRAM_CHAT_ID,
-                             text=message,
-                             )
-        except exceptions.UnknownHomeworkName as error:
-            message = (
-                f'Сбой в работе программы: название'
-                f'домашней работы не совпадает с ожидаемым. {error}'
-            )
-            logger.error(message)
-            bot.send_message(chat_id=TELEGRAM_CHAT_ID,
-                             text=message,
-                             )
-        except exceptions.UnknownHomeworkStatus as error:
-            message = (
-                f'Сбой в работе программы: статус проверки'
-                f'домашней работы не совпадает с ожидаемым. {error}'
-            )
-            logger.error(message)
-            bot.send_message(chat_id=TELEGRAM_CHAT_ID,
-                             text=message,
-                             )
-        except exceptions.ParseStatusKeyError as error:
-            message = (
-                f'Сбой в работе программы:'
-                f'словарь не содержит нужного ключа. {error}'
-            )
-            logger.error(message)
-            bot.send_message(chat_id=TELEGRAM_CHAT_ID,
-                             text=message,
-                             )
-        except exceptions.UndocumentedHomeworkStatusError as error:
-            message = (
-                f'Указан недокументированный статус домашней работы! {error}'
-            )
-            logger.error(message)
-            bot.send_message(chat_id=TELEGRAM_CHAT_ID,
-                             text=message,
-                             )
-
-        time.sleep(RETRY_TIME)
+            if new_error_message != message:
+                bot.send_message(chat_id=TELEGRAM_CHAT_ID,
+                                 text=message)
+            time.sleep(RETRY_TIME)
 
 
 if __name__ == '__main__':
     logging.basicConfig(
-        level=logging.DEBUG,
-        filename='my_logger.log',
+        filename=os.path.join(BASE_DIR, 'my_logger.log'),
+        filemode='w',
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        encoding='UTF-8',
-        filemode='w'
+        level=logging.DEBUG,
+        encoding='UTF-8'
     )
+    formatter = logging.Formatter(
+        '%(asctime)s - %(lineno)d - %(filename)s '
+        '- %(name)s - %(levelname)s - %(message)s')
+    handler_1 = logging.StreamHandler(stream=sys.stdout)
+    handler_2 = RotatingFileHandler(
+        (os.path.join(BASE_DIR, 'my_logger.log')),
+        encoding='UTF-8',
+        maxBytes=150_000,
+        backupCount=5)
+    handler_1.setFormatter(formatter)
+    handler_2.setFormatter(formatter)
+    logger.addHandler(handler_1)
+    logger.addHandler(handler_2)
     main()
