@@ -2,19 +2,35 @@ class TelegramErrorNotifications(Exception):
     """Исключения, пересылаемые в телеграм-чат."""
 
 
-class UnknownHomeworkStatus(TelegramErrorNotifications):
+class UnknownHomeworkStatus(Exception):
     """Статус проверки домашней работы не совпадает с ожидаемым."""
 
 
-class UndocumentedHomeworkStatusError(TelegramErrorNotifications):
+class UndocumentedHomeworkStatusError(Exception):
     """Указан недокументированный статус домашней работы."""
 
 
-class NotOkStatusCodeError(TelegramErrorNotifications):
+class BadRequestError(Exception):
+    """Ошибка неправильного запроса."""
+
+
+class NotOkStatusCodeError(Exception):
     """Запрос не выполнен."""
 
 
-class SendingMessageReportError(TelegramErrorNotifications):
+class DecodingFailsError(Exception):
+    """В ответ передан пустой или недопустимый JSON."""
+
+
+class MissingKeyError(Exception):
+    """В словаре отсутствует нужный ключ."""
+
+
+class IncorrectTypeError(Exception):
+    """Указан некорректный тип данных: ожидаемый тип данных - список."""
+
+
+class SendingMessageReportError(Exception):
     """Сбой при отправке сообщения."""
 
 
