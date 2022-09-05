@@ -3,7 +3,6 @@ import os
 import sys
 import time
 from http import HTTPStatus
-from logging.handlers import RotatingFileHandler
 
 import requests
 from requests.exceptions import RequestException
@@ -28,7 +27,7 @@ PRACTICUM_TOKEN = os.getenv('PRACTICUM_TOKEN')
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
-RETRY_TIME = 60 * 10
+RETRY_TIME = 20
 ENDPOINT = 'https://practicum.yandex.ru/api/user_api/homework_statuses/'
 HEADERS = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
 
@@ -50,8 +49,8 @@ def send_message(bot: Bot, message: str) -> None:
         )
     except TelegramError as error:
         raise exceptions.SendingMessageReportError(
-            'Сбой при отправке сообщения:'
-            'проверьте корректность передаваемого'
+            'Сбой при отправке сообщения: '
+            'проверьте корректность передаваемого '
             'токена и чат-id.'
         ) from error
     logger.info('Сообщение отправлено.')
@@ -66,23 +65,24 @@ def get_api_answer(current_timestamp: int) -> dict:
     )
     try:
         response = requests.get(url=ENDPOINT, headers=HEADERS, params=params)
-    except RequestException as error:
+        if response.status_code != HTTPStatus.OK:
+            raise exceptions.NotOkStatusCodeError(
+                f'Запрос не выполнен, статус ответа: {response.status_code}.'
+            )
+        return response.json()
+    except requests.exceptions.JSONDecodeError as exc:
+        raise exceptions.DecodingFailsError(
+            'В ответ передан пустой или недопустимый JSON.'
+        ) from exc
+    except RequestException as exc:
         raise exceptions.BadRequestError(
-            'Ошибка неправильного запроса: ') from error
-    if response.status_code != HTTPStatus.OK:
-        raise exceptions.NotOkStatusCodeError(
-            f'Запрос не выполнен, статус ответа: {response.status_code}.'
-        )
-    try:
+            'Ошибка неправильного запроса: '
+        ) from exc
+    finally:
         logger.info(
             'Проверка данных для получения '
             'ответа от API Яндекс.Практикум завершена.'
         )
-        return response.json()
-    except requests.exceptions.JSONDecodeError as error:
-        raise exceptions.DecodingFailsError(
-            'В ответ передан пустой или недопустимый JSON.'
-        ) from error
 
 
 def check_response(response: dict) -> dict:
@@ -95,19 +95,21 @@ def check_response(response: dict) -> dict:
         )
     if 'homeworks' not in response:
         raise exceptions.MissingKeyError(
-            f'В ответе {response} отсутствует нужный ключ.')
+            f'В ответе {response} отсутствует нужный ключ.'
+        )
     homeworks_list = response['homeworks']
-    if 'current_date' not in response:
-        raise exceptions.NoNewTimestampFromServer(
-            'В ответе отсутствует временная метка.')
+    if not homeworks_list:
+        raise exceptions.NoNewChecksFromServer(
+            'От сервера не поступила информация о новых проверках.'
+        )
+    homework = homeworks_list[0]
     if not isinstance(homeworks_list, list):
         raise exceptions.IncorrectTypeError(
             'Ожидаемый тип данных: список домашних работ.'
         )
-    homework = homeworks_list[0]
-    if homework == []:
-        raise exceptions.NoNewChecksFromServer(
-            'От сервера не поступила информация о новых проверках.'
+    if 'current_date' not in response:
+        raise exceptions.NoNewTimestampFromServer(
+            'В ответе отсутствует временная метка.'
         )
     logger.info('Проверка ответа API на корректность завершена.')
     return homework
@@ -115,8 +117,10 @@ def check_response(response: dict) -> dict:
 
 def parse_status(homework: dict) -> str:
     """Извлекаем из информации о домашней работе статус конкретного задания."""
-    logger.info('Идет получение статуса конкретного задания '
-                'из информации о домашней работе.')
+    logger.info(
+        'Идет получение статуса конкретного задания '
+        'из информации о домашней работе.'
+    )
     if 'homework_name' not in homework:
         raise KeyError(
             f'Словарь {homework} не содержит ключ homework_name.'
@@ -142,17 +146,8 @@ def parse_status(homework: dict) -> str:
 def check_tokens() -> bool:
     """Проверяем доступность переменных окружения."""
     logger.info('Началась проверка переменных окружения.')
-    if all(
-        (
-            PRACTICUM_TOKEN,
-            TELEGRAM_TOKEN,
-            TELEGRAM_CHAT_ID,
-        )
-    ):
-        logger.info('Проверка успешно завершена.')
-        return True
-    else:
-        return False
+    logger.info('Проверка успешно завершена.')
+    return all((PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID,))
 
 
 def main() -> None:
@@ -164,49 +159,38 @@ def main() -> None:
         sys.exit(message)
     bot = Bot(token=TELEGRAM_TOKEN)
     current_timestamp = 0
-    current_homework_status = ''
+    new_message = ''
     while True:
         try:
             response = get_api_answer(current_timestamp=current_timestamp)
             homework = check_response(response)
+            current_timestamp = response['current_date']
             message = parse_status(homework)
-            if message != current_homework_status:
+            if message != new_message:
                 send_message(bot, message)
-                current_homework_status = message
+                new_message = str(message)
             else:
                 message = 'Статус проверки домашней работы не изменился.'
                 logger.debug(message)
-                current_timestamp = response['current_date']
         except exceptions.ErrorNotifications as exc:
             logger.error(exc)
         except Exception as error:
-            text = (
-                f'Сбой в работе программы: {error}'
-            )
-            logger.error(text)
-            if text != error:
-                send_message(bot, text)
-                error = message
+            message = f'Сбой в работе программы: {error}'
+            logger.error(message)
         finally:
             time.sleep(RETRY_TIME)
 
 
 if __name__ == '__main__':
+    logging.basicConfig(
+        format=FORMAT,
+        level=logging.DEBUG,
+        handlers=[
+            logging.StreamHandler(stream=sys.stdout),
+        ],
+        encoding='UTF-8'
+    )
     try:
-        logging.basicConfig(
-            format=FORMAT,
-            level=logging.DEBUG,
-            handlers=[
-                logging.StreamHandler(stream=sys.stdout),
-                RotatingFileHandler(
-                    filename=LOGGING_FILE_PATH,
-                    mode='w',
-                    encoding='UTF-8',
-                    maxBytes=150_000,
-                    backupCount=5)
-            ],
-            encoding='UTF-8'
-        )
         main()
     except KeyboardInterrupt:
         pass

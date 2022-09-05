@@ -30,12 +30,12 @@ class IncorrectTypeError(Exception):
     """Указан некорректный тип данных: ожидаемый тип данных - список."""
 
 
-class SendingMessageReportError(Exception):
-    """Сбой при отправке сообщения."""
-
-
 class ErrorNotifications(Exception):
     """Ислючения, не пересылаемые в телеграм-чат."""
+
+
+class SendingMessageReportError(ErrorNotifications):
+    """Сбой при отправке сообщения."""
 
 
 class StandartDeviations(ErrorNotifications):
