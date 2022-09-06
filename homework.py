@@ -65,19 +65,20 @@ def get_api_answer(current_timestamp: int) -> dict:
     )
     try:
         response = requests.get(url=ENDPOINT, headers=HEADERS, params=params)
-        if response.status_code != HTTPStatus.OK:
-            raise exceptions.NotOkStatusCodeError(
-                f'Запрос не выполнен, статус ответа: {response.status_code}.'
-            )
-        return response.json()
-    except requests.exceptions.JSONDecodeError as exc:
-        raise exceptions.DecodingFailsError(
-            'В ответ передан пустой или недопустимый JSON.'
-        ) from exc
-    except RequestException as exc:
+    except RequestException as error:
         raise exceptions.BadRequestError(
             'Ошибка неправильного запроса: '
-        ) from exc
+        ) from error
+    if response.status_code != HTTPStatus.OK:
+        raise exceptions.NotOkStatusCodeError(
+            f'Запрос не выполнен, статус ответа: {response.status_code}.'
+        )
+    try:
+        return response.json()
+    except requests.exceptions.JSONDecodeError as error:
+        raise exceptions.DecodingFailsError(
+            'В ответ передан пустой или недопустимый JSON.'
+        ) from error
     finally:
         logger.info(
             'Проверка данных для получения '
@@ -90,7 +91,7 @@ def check_response(response: dict) -> dict:
     logger.info('Началась проверка ответа API на корректность.')
     if not isinstance(response, dict):
         raise TypeError(
-            f'Указан некорректный тип данных: {response}.'
+            f'Указан некорректный тип данных: {response}. '
             f'Ожидаемый тип данных - словарь.'
         )
     if 'homeworks' not in response:
@@ -138,7 +139,7 @@ def parse_status(homework: dict) -> str:
     verdict = HOMEWORK_VERDICTS[homework_status]
     logger.info('Получение статуса успешно завершено.')
     return (
-        f'Изменился статус проверки работы "{homework_name}".'
+        f'Изменился статус проверки работы "{homework_name}". '
         f'{verdict}'
     )
 
@@ -146,7 +147,6 @@ def parse_status(homework: dict) -> str:
 def check_tokens() -> bool:
     """Проверяем доступность переменных окружения."""
     logger.info('Началась проверка переменных окружения.')
-    logger.info('Проверка успешно завершена.')
     return all((PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID,))
 
 
@@ -159,25 +159,27 @@ def main() -> None:
         sys.exit(message)
     bot = Bot(token=TELEGRAM_TOKEN)
     current_timestamp = 0
-    new_message = ''
+    message = new_message = str()
     while True:
         try:
             response = get_api_answer(current_timestamp=current_timestamp)
             homework = check_response(response)
-            current_timestamp = response['current_date']
             message = parse_status(homework)
-            if message != new_message:
-                send_message(bot, message)
-                new_message = str(message)
-            else:
-                message = 'Статус проверки домашней работы не изменился.'
-                logger.debug(message)
         except exceptions.ErrorNotifications as exc:
             logger.error(exc)
         except Exception as error:
             message = f'Сбой в работе программы: {error}'
             logger.error(message)
         finally:
+            if message != new_message:
+                try:
+                    send_message(bot, message)
+                except Exception as error:
+                    raise exceptions.SendingMessageReportError from error
+            else:
+                current_timestamp = response['current_date']
+                logger.debug('Статус проверки домашней работы не изменился.')
+            new_message = message
             time.sleep(RETRY_TIME)
 
 
