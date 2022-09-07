@@ -16,7 +16,6 @@ import exceptions
 load_dotenv()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-LOGGING_FILE_PATH = os.path.join(BASE_DIR, 'my_logger.log')
 
 FORMAT = (
     '%(asctime)s - %(lineno)d - %(filename)s '
@@ -103,11 +102,11 @@ def check_response(response: dict) -> dict:
         raise exceptions.NoNewChecksFromServer(
             'От сервера не поступила информация о новых проверках.'
         )
-    homework = homeworks_list[0]
     if not isinstance(homeworks_list, list):
         raise exceptions.IncorrectTypeError(
             'Ожидаемый тип данных: список домашних работ.'
         )
+    homework = homeworks_list[0]
     if 'current_date' not in response:
         raise exceptions.NoNewTimestampFromServer(
             'В ответе отсутствует временная метка.'
@@ -170,17 +169,17 @@ def main() -> None:
         except Exception as error:
             message = f'Сбой в работе программы: {error}'
             logger.error(message)
-        finally:
-            if message != new_message:
-                try:
-                    send_message(bot, message)
-                except Exception as error:
-                    raise exceptions.SendingMessageReportError from error
-            else:
-                current_timestamp = response['current_date']
-                logger.debug('Статус проверки домашней работы не изменился.')
-            new_message = message
-            time.sleep(RETRY_TIME)
+        else:
+            current_timestamp = response['current_date']
+        if message != new_message:
+            try:
+                send_message(bot, message)
+            except TelegramError as error:
+                raise exceptions.SendingMessageReportError from error
+        else:
+            logger.debug('Статус проверки домашней работы не изменился.')
+        new_message = message
+        time.sleep(RETRY_TIME)
 
 
 if __name__ == '__main__':
@@ -195,4 +194,4 @@ if __name__ == '__main__':
     try:
         main()
     except KeyboardInterrupt:
-        pass
+        logger.info('Работа программы завершена.')
