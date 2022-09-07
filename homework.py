@@ -26,7 +26,7 @@ PRACTICUM_TOKEN = os.getenv('PRACTICUM_TOKEN')
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
-RETRY_TIME = 60 * 10
+RETRY_TIME = 20  # 60 * 10
 ENDPOINT = 'https://practicum.yandex.ru/api/user_api/homework_statuses/'
 HEADERS = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
 
@@ -174,11 +174,11 @@ def main() -> None:
         if message != new_message:
             try:
                 send_message(bot, message)
-            except TelegramError as error:
-                raise exceptions.SendingMessageReportError from error
+            except exceptions.SendingMessageReportError as error:
+                logger.error(error)
+            new_message = message
         else:
             logger.debug('Статус проверки домашней работы не изменился.')
-        new_message = message
         time.sleep(RETRY_TIME)
 
 
